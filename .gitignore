@@ -26,3 +26,12 @@ node_modules
 
 # Users Environment Variables
 .lock-wscript
+
+# 'lib' will contain the compiled Javascript
+lib
+
+# Ignore compiled test files
+test/*.js
+
+# Ignore generated documentation
+apidocs

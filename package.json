@@ -4,7 +4,8 @@
   "description": "Common functionality for Infolis Node projects",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "coffee test/tests.coffee | tap-spec",
+    "docs": "docker -i src -o apidocs --updated_files -s -n -c vs --extras fileSearch"
   },
   "repository": {
     "type": "git",
@@ -15,5 +16,14 @@
   "bugs": {
     "url": "https://github.com/infolis/infolis-common/issues"
   },
-  "homepage": "https://github.com/infolis/infolis-common"
+  "homepage": "https://github.com/infolis/infolis-common",
+  "dependencies": {
+    "jsonld": "^0.3.22",
+    "n3": "^0.4.1"
+  },
+  "devDependencies": {
+    "docker": "^0.2.14",
+    "tap-spec": "^2.2.1",
+    "tape": "^3.5.0"
+  }
 }
