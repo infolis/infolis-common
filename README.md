@@ -1,6 +1,8 @@
 infolis-common
 ==============
 
+Install `libraptor` headers: `sudo apt-get install libraptor2-dev`
+
 Install dependencies: `npm install`
 
 Test: `npm test`
