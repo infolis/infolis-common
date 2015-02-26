@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "coffee test/tests.coffee | tap-spec",
-    "docs": "docker -i src -o apidocs --updated_files -s -n -c vs --extras fileSearch"
+    "docs": "docker -i src -o apidocs --updated_files -s -n -c vs --extras fileSearch",
+    "compile": "coffee -c -o lib src"
   },
   "repository": {
     "type": "git",
@@ -18,12 +19,17 @@
   },
   "homepage": "https://github.com/infolis/infolis-common",
   "dependencies": {
+    "accepts": "^1.2.4",
     "jsonld": "^0.3.22",
-    "n3": "^0.4.1"
+    "n3": "^0.4.1",
+    "raptor": "git://github.com/0xfeedface/node_raptor.git"
   },
   "devDependencies": {
     "docker": "^0.2.14",
+    "express": "^4.12.0",
+    "mocks": "0.0.15",
     "tap-spec": "^2.2.1",
-    "tape": "^3.5.0"
+    "tape": "^3.5.0",
+    "tapes": "^0.4.1"
   }
 }
