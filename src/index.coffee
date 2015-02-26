@@ -1,12 +1,10 @@
 # # infolis-common
 
-JsonLD  = require 'jsonld'
-N3      = require 'n3'
-Async   = require 'async'
-Accepts = require 'accepts'
-Raptor  = require 'node_raptor'
-Readable = require('stream').Readable
-
+JsonLD       = require 'jsonld'
+N3           = require 'n3'
+Async        = require 'async'
+Accepts      = require 'accepts'
+ChildProcess = require 'child_process'
 
 # ## Namespaces
 ###
@@ -215,15 +213,18 @@ JsonLdConnegMiddleware = (options) ->
 		if not supportedTypes[matchingType]
 			return next { status: 406,  message: "Incompatible media type found for #{req.getHeader 'Accept'}" }
 
-		switch matchingType
+		shortType = supportedTypes[matchingType]
+		switch supportedTypes[matchingType]
 			when 'jsonld'
 				# Nothing to do, data is already in the right format'
-				res.setHeader 'Content-Type': 'application/ld+json'
-				return res.end req.jsonld
+				res.status = 200
+				res.setHeader 'Content-Type', 'application/ld+json'
+				return res.send JSON.stringify(req.jsonld, null, 2)
 			when 'html'
 				# TODO decide what to do here actually
-				res.setHeader 'Content-Type': 'text/html'
-				return res.end "<pre>" + JSON.stringify(req.jsonld) + '</pre>' # TODO
+				res.status = 200
+				res.setHeader 'Content-Type', 'text/html'
+				return res.send "<pre>" + JSON.stringify(req.jsonld) + '</pre>' # TODO
 			else
 				JsonLD.toRDF req.jsonld, {expandContext: context, format: "application/nquads"}, (err, nquads) ->
 					if err
@@ -231,25 +232,22 @@ JsonLdConnegMiddleware = (options) ->
 					# If nquads were requested we're done now
 					if matchingType is 'nquads'
 						res.status = 200
-						res.setHeader 'Content-Type': 'application/nquads'
-						return res.end nquads
-					parser = Raptor.createParser('nquads')
-					serializer = Raptor.createSerializer(matchingType)
-					# parser.setBaseURI baseURI
-					# serializer.setBaseURI baseURI
-					# parser.on 'message', (msg) ->
-						# console.log "FOO"
-					# parser.on 'namespace', (msg) ->
-						# console.log "FOO"
-					# # serializer.on 'error', (data) ->
-					# #     console.log "FOO"
-					# # serializer.on 'data', (data) ->
-					# #     console.log data
-					# #     return res.end data
-					inputStream = new Readable
-					# inputStream._read = () -> {}
-					# inputStream.push nquads
-					inputStream.pipe(parser).pipe(serializer)
+						res.setHeader 'Content-Type', 'application/nquads'
+						return res.send nquads
+					cmd = "rapper -i nquads -o #{shortType} - #{baseURI}"
+					buf=''
+					serializer = ChildProcess.spawn("rapper", ["-i", "nquads", "-o", shortType, "-", baseURI])
+					serializer.on 'error', (err) -> console.error err
+					serializer.stdout.on 'data', (chunk) -> 
+						buf += chunk.toString('utf8')
+					serializer.stdin.write(nquads)
+					serializer.stdin.end()
+					serializer.on 'close', (code) ->
+						if code isnt 0
+							return next { status: 500,  message: "Rapper failed to convert N-QUADS to #{shortType}", body: err }
+						res.status = 200
+						res.setHeader 'Content-Type', matchingType
+						res.send buf
 
 
 
