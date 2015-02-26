@@ -261,7 +261,9 @@ JsonLdConnegMiddleware = (options) ->
 				body = ''
 				profile = detectJsonLdProfile req
 				switch profile
-					when 'flattened'
+					when JSONLD_PROFILES.COMPACT
+						body = jsonld.expand rawVocab, {expandContext: context}
+						# TODO XXX
 				res.status = 200
 				res.setHeader 'Content-Type', 'application/ld+json'
 				return res.send JSON.stringify(req.jsonld, null, 2)
