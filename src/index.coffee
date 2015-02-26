@@ -182,11 +182,8 @@ right format to the client, based on the JSON-LD representation of the graph.
 ###
 
 JsonLdConnegMiddleware = (options) ->
-	options = options || {}
-	options.contextLink = options.contextLink 
-	options.context = options.context || {}
-	options.baseURI = options.baseURI || 'http://NO-BASEURI-IS-SET.tld/'
 
+	# <h3>Supported Types</h3>
 	# The Middleware is able to output JSON-LD in these serializations
 	supportedTypes = {
 		'application/json':        'jsonld'   # no-op
@@ -202,6 +199,32 @@ JsonLdConnegMiddleware = (options) ->
 		'text/xml':                'rdfxml'   # jsonld/nquads -> raptor/rdfxml
 		'text/html':               'html'     # jsonld/nquads -> raptor/turtle -> jade
 	}
+
+	# <h3>JSON-LD profiles</h3>
+	JSONLD_PROFILES = 
+		COMPACT: 'http://www.w3.org/ns/json-ld#compacted'
+		FLATTENED: 'http://www.w3.org/ns/json-ld#flattened'
+		EXPANDED: 'http://www.w3.org/ns/json-ld#expanded'
+
+	# <h3>Options</h3>
+	options = options || {}
+	# Context Link to be sent out as HTTP header (default: none)
+	options.contextLink    = options.contextLink    || null
+	# Context object (default: none)
+	options.context        = options.context        || {}
+	# Base URI for RDF serializations that require them (i.e. all of them, hence the default)
+	options.baseURI        = options.baseURI        || 'http://NO-BASEURI-IS-SET.tld/'
+	# Default JSON-LD compaction profile to use if no other profile is requested (defaults to compacted)
+	options.defaultProfile = options.defaultProfile || JSONLD_PROFILE.COMPACT
+
+	# <h3>detectJsonLdProfile</h3>
+	detectJsonLdProfile = (req) ->
+		acc = req.headers.accept
+		if not acc
+			return options.defaultProfile
+		requestedProfile = acc.match /profile=\"([^"]+)\"/
+		if requestedProfile and requestedProfile[1]
+			return requestedProfile
 
 	# <h3>function()</h3>
 	# Return the actual middleware function
@@ -221,7 +244,7 @@ JsonLdConnegMiddleware = (options) ->
 			return next { status: 500, message: 'No JSON-LD payload in the request, nothing to do' }
 
 		# To make qualified content negotiation, an 'Accept' header is required
-		# TODO This might be too strict
+		# TODO This is too strict and should be lifted before usage in production, i.e. just send JSON
 		if not req.headers.accept
 			return next { status: 406,  message: "No Accept header given" }
 
@@ -234,8 +257,11 @@ JsonLdConnegMiddleware = (options) ->
 		shortType = supportedTypes[matchingType]
 		switch supportedTypes[matchingType]
 
-			# Nothing to do, data is already in the right format'
 			when 'jsonld'
+				body = ''
+				profile = detectJsonLdProfile req
+				switch profile
+					when 'flattened'
 				res.status = 200
 				res.setHeader 'Content-Type', 'application/ld+json'
 				return res.send JSON.stringify(req.jsonld, null, 2)
