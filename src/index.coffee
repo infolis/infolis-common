@@ -181,29 +181,47 @@ right format to the client, based on the JSON-LD representation of the graph.
 
 ###
 
-supportedTypes = {
-	'application/json':        'jsonld'   # no-op
-	'application/ld+json':     'jsonld'   # no-op
-	'application/rdf-triples': 'ntriples' # jsonld/nquads -> raptor/ntriples
-	'application/trig':        'trig'     # jsonld/nquads -> raptor/trig
-	'application/x-turtle':    'turtle'   # jsonld/nquads -> raptor/turtle
-	'text/rdf+n3':             'turtle'   # jsonld/nquads -> raptor/turtle
-	'text/turtle':             'turtle'   # jsonld/nquads -> raptor/turtle
-	'application/rdf+json':    'rdfjson'  # jsonld/nquads -> raptor/json
-	'application/nquads':      'nquads'   # jsonld/nquads
-	'application/rdf+xml':     'rdfxml'   # jsonld/nquads -> raptor/rdfxml
-	'text/xml':                'rdfxml'   # jsonld/nquads -> raptor/rdfxml
-	'text/html':               'html'     # jsonld/nquads -> raptor/turtle -> jade
-}
 JsonLdConnegMiddleware = (options) ->
 	options = options || {}
-	context = options.context || {}
-	baseURI = options.baseURI || 'http://NO-BASEURI-IS-SET.tld/'
-	# TODO provide options for prefixes, baseURI etc pp
+	options.contextLink = options.contextLink 
+	options.context = options.context || {}
+	options.baseURI = options.baseURI || 'http://NO-BASEURI-IS-SET.tld/'
+
+	# The Middleware is able to output JSON-LD in these serializations
+	supportedTypes = {
+		'application/json':        'jsonld'   # no-op
+		'application/ld+json':     'jsonld'   # no-op
+		'application/rdf-triples': 'ntriples' # jsonld/nquads -> raptor/ntriples
+		'application/trig':        'trig'     # jsonld/nquads -> raptor/trig
+		'application/x-turtle':    'turtle'   # jsonld/nquads -> raptor/turtle
+		'text/rdf+n3':             'turtle'   # jsonld/nquads -> raptor/turtle
+		'text/turtle':             'turtle'   # jsonld/nquads -> raptor/turtle
+		'application/rdf+json':    'rdfjson'  # jsonld/nquads -> raptor/json
+		'application/nquads':      'nquads'   # jsonld/nquads
+		'application/rdf+xml':     'rdfxml'   # jsonld/nquads -> raptor/rdfxml
+		'text/xml':                'rdfxml'   # jsonld/nquads -> raptor/rdfxml
+		'text/html':               'html'     # jsonld/nquads -> raptor/turtle -> jade
+	}
+
+	# <h3>function()</h3>
+	# Return the actual middleware function
 	return (req, res, next) ->
+
+		###
+		The JSON-LD must be attached as 'jsonld' to the request, i.e. the handler before the JSON-LD
+		middleware must do
+		```coffee
+		_ handler : (req, res) ->
+		_ 	# do something to create/retrieve jsonld
+		_ 	req.jsonld = {'@context': ...}
+		_ 	next()
+		```
+		###
 		if not req.jsonld
 			return next { status: 500, message: 'No JSON-LD payload in the request, nothing to do' }
 
+		# To make qualified content negotiation, an 'Accept' header is required
+		# TODO This might be too strict
 		if not req.headers.accept
 			return next { status: 406,  message: "No Accept header given" }
 
@@ -215,33 +233,43 @@ JsonLdConnegMiddleware = (options) ->
 
 		shortType = supportedTypes[matchingType]
 		switch supportedTypes[matchingType]
+
+			# Nothing to do, data is already in the right format'
 			when 'jsonld'
-				# Nothing to do, data is already in the right format'
 				res.status = 200
 				res.setHeader 'Content-Type', 'application/ld+json'
 				return res.send JSON.stringify(req.jsonld, null, 2)
+
+			# TODO Decide a proper output format for HTML -- prettified JSON-LD? Turtle?
 			when 'html'
-				# TODO decide what to do here actually
 				res.status = 200
 				res.setHeader 'Content-Type', 'text/html'
 				return res.send "<pre>" + JSON.stringify(req.jsonld) + '</pre>' # TODO
+
+			# Need to convert JSON-LD to N-Quads
 			else
-				JsonLD.toRDF req.jsonld, {expandContext: context, format: "application/nquads"}, (err, nquads) ->
+				JsonLD.toRDF req.jsonld, {expandContext: options.context, format: "application/nquads"}, (err, nquads) ->
 					if err
 						return next { status: 500,  message: "Failed to convert JSON-LD to RDF", body: err }
+
 					# If nquads were requested we're done now
 					if matchingType is 'nquads'
 						res.status = 200
 						res.setHeader 'Content-Type', 'application/nquads'
 						return res.send nquads
-					cmd = "rapper -i nquads -o #{shortType} - #{baseURI}"
-					buf=''
-					serializer = ChildProcess.spawn("rapper", ["-i", "nquads", "-o", shortType, "-", baseURI])
+
+					# Spawn `rapper` with a nquads parser and a serializer producing `#{shortType}`
+					cmd = "rapper -i nquads -o #{shortType} - #{options.baseURI}"
+					serializer = ChildProcess.spawn("rapper", ["-i", "nquads", "-o", shortType, "-", options.baseURI])
 					serializer.on 'error', (err) -> console.error err
+					# When data is available, concatenate it to a buffer
+					buf=''
 					serializer.stdout.on 'data', (chunk) -> 
 						buf += chunk.toString('utf8')
+					# Pipe the nquads into the process and close stdin
 					serializer.stdin.write(nquads)
 					serializer.stdin.end()
+					# When rapper finished without error, return the serialized RDF
 					serializer.on 'close', (code) ->
 						if code isnt 0
 							return next { status: 500,  message: "Rapper failed to convert N-QUADS to #{shortType}", body: err }
