@@ -185,50 +185,130 @@ JsonLdConnegMiddleware = (options) ->
 
 	# <h3>Supported Types</h3>
 	# The Middleware is able to output JSON-LD in these serializations
-	supportedTypes = {
-		'application/json':        'jsonld'   # no-op
-		'application/ld+json':     'jsonld'   # no-op
-		'application/rdf-triples': 'ntriples' # jsonld/nquads -> raptor/ntriples
-		'application/trig':        'trig'     # jsonld/nquads -> raptor/trig
-		'application/x-turtle':    'turtle'   # jsonld/nquads -> raptor/turtle
-		'text/rdf+n3':             'turtle'   # jsonld/nquads -> raptor/turtle
-		'text/turtle':             'turtle'   # jsonld/nquads -> raptor/turtle
-		'application/rdf+json':    'rdfjson'  # jsonld/nquads -> raptor/json
-		'application/nquads':      'nquads'   # jsonld/nquads
-		'application/rdf+xml':     'rdfxml'   # jsonld/nquads -> raptor/rdfxml
-		'text/xml':                'rdfxml'   # jsonld/nquads -> raptor/rdfxml
-		'text/html':               'html'     # jsonld/nquads -> raptor/turtle -> jade
-	}
+
+	typeMap = [
+		['application/json',        'jsonld']   # no-op
+		['application/ld+json',     'jsonld']   # no-op
+		['application/rdf-triples', 'ntriples'] # jsonld/nquads -> raptor/ntriples
+                                                # ['application/trig',        'trig']     # jsonld/nquads -> raptor/trig
+		['text/vnd.graphviz',       'dot']      # jsonld/nquads -> rapper/graphviz
+		['application/x-turtle',    'turtle']   # jsonld/nquads -> raptor/turtle
+		['text/rdf+n3',             'turtle']   # jsonld/nquads -> raptor/turtle
+		['text/turtle',             'turtle']   # jsonld/nquads -> raptor/turtle
+		['application/rdf+json',    'json']     # jsonld/nquads -> raptor/json
+		['application/nquads',      'nquads']   # jsonld/nquads
+		['application/rdf+xml',     'rdfxml']   # jsonld/nquads -> raptor/rdfxml
+		['text/xml',                'rdfxml']   # jsonld/nquads -> raptor/rdfxml
+		['text/html',               'html']     # jsonld/nquads -> raptor/turtle -> jade
+	]
+	SUPPORTED_TYPES = {}
+	SUPPORTED_TYPES[type] = shortType for [type, shortType] in typeMap
 
 	# <h3>JSON-LD profiles</h3>
-	JSONLD_PROFILES = 
-		COMPACT: 'http://www.w3.org/ns/json-ld#compacted'
+	JSONLD_PROFILE = 
+		COMPACTED: 'http://www.w3.org/ns/json-ld#compacted'
 		FLATTENED: 'http://www.w3.org/ns/json-ld#flattened'
-		EXPANDED: 'http://www.w3.org/ns/json-ld#expanded'
+		EXPANDED:  'http://www.w3.org/ns/json-ld#expanded'
 
 	# <h3>Options</h3>
-	options = options || {}
+	options = options                         || {}
 	# Context Link to be sent out as HTTP header (default: none)
-	options.contextLink    = options.contextLink    || null
+	options.contextLink = options.contextLink || null
 	# Context object (default: none)
-	options.context        = options.context        || {}
+	options.context = options.context         || {}
 	# Base URI for RDF serializations that require them (i.e. all of them, hence the default)
-	options.baseURI        = options.baseURI        || 'http://NO-BASEURI-IS-SET.tld/'
+	options.baseURI = options.baseURI         || 'http://NO-BASEURI-IS-SET.tld/'
 	# Default JSON-LD compaction profile to use if no other profile is requested (defaults to compacted)
-	options.defaultProfile = options.defaultProfile || JSONLD_PROFILE.COMPACT
+	options.profile = options.profile         || JSONLD_PROFILE.COMPACTED
+	# Options for jsonld.expand
+	options.expand = options.expand           || {expandContext: options.context}
+	# Options for jsonld.compact
+	options.compact =  options.compact        || {expandContext: options.context, compactArrays: true}
+	# Options for jsonld.flatten
+	options.flatten =  options.flatten        || {expandContext: options.context}
 
 	# <h3>detectJsonLdProfile</h3>
 	detectJsonLdProfile = (req) ->
-		acc = req.headers.accept
-		if not acc
-			return options.defaultProfile
-		requestedProfile = acc.match /profile=\"([^"]+)\"/
-		if requestedProfile and requestedProfile[1]
-			return requestedProfile
+		ret = options.profile
+		acc = req.header('Accept')
+		if acc
+			requestedProfile = acc.match /profile=\"([^"]+)\"/
+			if requestedProfile and requestedProfile[1]
+				ret = requestedProfile[1]
+		return ret
 
-	# <h3>function()</h3>
+	_error = (statusCode, msg, cause) =>
+		err = new Error (msg)
+		err.statusCode = statusCode
+		err.cause = cause
+		return err
+
+	handleJsonLd = (req, res, next) ->
+		sendJsonLD = (err, body) ->
+			if err
+				return next _error(500,  "JSON-LD error restructuring error", err)
+			res.statusCode = 200
+			res.setHeader 'Content-Type', 'application/ld+json'
+			return res.end JSON.stringify(body, null, 2)
+		profile = detectJsonLdProfile(req)
+		console.log profile
+		console.log req.headers['accept']
+		switch profile
+			when JSONLD_PROFILE.COMPACTED
+				return JsonLD.compact req.jsonld, options.context, options.compact, sendJsonLD
+			when JSONLD_PROFILE.EXPANDED
+				return JsonLD.expand req.jsonld, {expandContext: options.context}, sendJsonLD
+			when JSONLD_PROFILE.FLATTENED
+				return JsonLD.flatten req.jsonld, {expandContext: options.context}, sendJsonLD
+			else
+				return next _error(500, "Bad profile: #{profile}")
+
+	# TODO Decide a proper output format for HTML -- prettified JSON-LD? Turtle?
+	handleHtml = (req, res, next) ->
+		res.statusCode = 200
+		res.setHeader 'Content-Type', 'text/html'
+		return res.send "<pre>" + JSON.stringify(req.jsonld) + '</pre>' # TODO
+
+	# Need to convert JSON-LD to N-Quads
+	handleRdf = (req, res, next) ->
+		matchingType = Accepts(req).types(Object.keys SUPPORTED_TYPES)
+		shortType = SUPPORTED_TYPES[matchingType]
+		JsonLD.toRDF req.jsonld, {expandContext: options.context, format: "application/nquads"}, (err, nquads) ->
+			if err
+				return next new _error(500,  "Failed to convert JSON-LD to RDF", err)
+
+			# If nquads were requested we're done now
+			if shortType is 'nquads'
+				res.statusCode = 200
+				res.setHeader 'Content-Type', 'application/nquads'
+				return res.send nquads
+
+			# Spawn `rapper` with a nquads parser and a serializer producing `#{shortType}`
+			cmd = "rapper -i nquads -o #{shortType} - #{options.baseURI}"
+			serializer = ChildProcess.spawn("rapper", ["-i", "nquads", "-o", shortType, "-", options.baseURI])
+			serializer.on 'error', (err) -> 
+				return next _error(500, 'Could not spawn rapper process')
+			# When data is available, concatenate it to a buffer
+			buf=''
+			errbuf=''
+			serializer.stderr.on 'data', (chunk) -> 
+				errbuf += chunk.toString('utf8')
+			serializer.stdout.on 'data', (chunk) -> 
+				buf += chunk.toString('utf8')
+			# Pipe the nquads into the process and close stdin
+			serializer.stdin.write(nquads)
+			serializer.stdin.end()
+			# When rapper finished without error, return the serialized RDF
+			serializer.on 'close', (code) ->
+				if code isnt 0
+					return next _error(500,  "Rapper failed to convert N-QUADS to #{shortType}", errbuf)
+				res.statusCode = 200
+				res.setHeader 'Content-Type', matchingType
+				res.send buf
+
+	# <h3>handler</h3>
 	# Return the actual middleware function
-	return (req, res, next) ->
+	handle = (req, res, next) ->
 
 		###
 		The JSON-LD must be attached as 'jsonld' to the request, i.e. the handler before the JSON-LD
@@ -241,71 +321,29 @@ JsonLdConnegMiddleware = (options) ->
 		```
 		###
 		if not req.jsonld
-			return next { status: 500, message: 'No JSON-LD payload in the request, nothing to do' }
+			return next _error(500, 'No JSON-LD payload in the request, nothing to do')
 
 		# To make qualified content negotiation, an 'Accept' header is required
-		# TODO This is too strict and should be lifted before usage in production, i.e. just send JSON
-		if not req.headers.accept
-			return next { status: 406,  message: "No Accept header given" }
+		# TODO This is too strict and should be lifted before usage in production, i.e. just send JSON-LD
+		if not req.header('Accept')
+			return next _error(406,  "No Accept header given")
 
-		acc = Accepts(req)
-		matchingType = acc.types(Object.keys(supportedTypes))
+		matchingType = Accepts(req).types(Object.keys SUPPORTED_TYPES)
 
-		if not supportedTypes[matchingType]
-			return next { status: 406,  message: "Incompatible media type found for #{req.getHeader 'Accept'}" }
+		if not SUPPORTED_TYPES[matchingType]
+			return next _error(406, "Incompatible media type found for #{req.header 'Accept'}")
 
-		shortType = supportedTypes[matchingType]
-		switch supportedTypes[matchingType]
+		switch SUPPORTED_TYPES[matchingType]
+			when 'jsonld' then return handleJsonLd(req, res, next)
+			when 'html'   then return   handleHtml(req, res, next)
+			else               return    handleRdf(req, res, next)
 
-			when 'jsonld'
-				body = ''
-				profile = detectJsonLdProfile req
-				switch profile
-					when JSONLD_PROFILES.COMPACT
-						body = jsonld.expand rawVocab, {expandContext: context}
-						# TODO XXX
-				res.status = 200
-				res.setHeader 'Content-Type', 'application/ld+json'
-				return res.send JSON.stringify(req.jsonld, null, 2)
-
-			# TODO Decide a proper output format for HTML -- prettified JSON-LD? Turtle?
-			when 'html'
-				res.status = 200
-				res.setHeader 'Content-Type', 'text/html'
-				return res.send "<pre>" + JSON.stringify(req.jsonld) + '</pre>' # TODO
-
-			# Need to convert JSON-LD to N-Quads
-			else
-				JsonLD.toRDF req.jsonld, {expandContext: options.context, format: "application/nquads"}, (err, nquads) ->
-					if err
-						return next { status: 500,  message: "Failed to convert JSON-LD to RDF", body: err }
-
-					# If nquads were requested we're done now
-					if matchingType is 'nquads'
-						res.status = 200
-						res.setHeader 'Content-Type', 'application/nquads'
-						return res.send nquads
-
-					# Spawn `rapper` with a nquads parser and a serializer producing `#{shortType}`
-					cmd = "rapper -i nquads -o #{shortType} - #{options.baseURI}"
-					serializer = ChildProcess.spawn("rapper", ["-i", "nquads", "-o", shortType, "-", options.baseURI])
-					serializer.on 'error', (err) -> console.error err
-					# When data is available, concatenate it to a buffer
-					buf=''
-					serializer.stdout.on 'data', (chunk) -> 
-						buf += chunk.toString('utf8')
-					# Pipe the nquads into the process and close stdin
-					serializer.stdin.write(nquads)
-					serializer.stdin.end()
-					# When rapper finished without error, return the serialized RDF
-					serializer.on 'close', (code) ->
-						if code isnt 0
-							return next { status: 500,  message: "Rapper failed to convert N-QUADS to #{shortType}", body: err }
-						res.status = 200
-						res.setHeader 'Content-Type', matchingType
-						res.send buf
-
-
+	# Return
+	return {
+		handle: handle
+		JSONLD_PROFILE: JSONLD_PROFILE
+		SUPPORTED_TYPES: SUPPORTED_TYPES
+	}
 
 # ## Module exports	
 module.exports = {
